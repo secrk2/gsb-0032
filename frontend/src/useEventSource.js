@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
+import { emitSse } from "./events.js";
 
 /**
- * 订阅后端 SSE：/api/events
- * @param {(eventName: string, data: any) => void} onEvent
+ * 订阅后端 SSE：/api/events（全应用唯一连接）。
+ * 收到的事件转发到全局事件总线 events.js，同时交给 onEvent 回调。
+ * @param {(eventName: string, data: any) => void} [onEvent]
  */
 export function useEventSource(onEvent) {
   const handlerRef = useRef(onEvent);
@@ -17,14 +19,19 @@ export function useEventSource(onEvent) {
       "audit",
       "job.output",
       "job.finished",
+      "quick.output",
+      "quick.finished",
     ];
     const listeners = names.map((name) => {
       const fn = (e) => {
+        let data = {};
         try {
-          handlerRef.current(name, e.data ? JSON.parse(e.data) : {});
+          data = e.data ? JSON.parse(e.data) : {};
         } catch {
-          /* ignore malformed frame */
+          return; // 忽略畸形帧
         }
+        emitSse(name, data);
+        handlerRef.current?.(name, data);
       };
       es.addEventListener(name, fn);
       return [name, fn];

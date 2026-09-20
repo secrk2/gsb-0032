@@ -7,8 +7,6 @@
 """
 from __future__ import annotations
 
-import asyncio
-
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -69,24 +67,36 @@ class JobViewSet(viewsets.ViewSet):
         job = Job.objects.filter(pk=pk).first()
         if not job:
             return Response({"detail": "作业不存在"}, status=404)
-        try:
-            from .services import get_redis
+        # 已结束且已归档：读数据库；执行中：读 Redis 实时缓冲
+        if job.status != JobStatus.RUNNING and job.output:
+            output = job.output
+        else:
+            try:
+                from .services import decode_output_entries, get_redis
 
-            lines = get_redis().lrange(job.output_key, 0, -1)
-        except Exception:  # noqa: BLE001
-            lines = []
-        return Response({"id": job.pk, "output": "".join(lines)})
+                raw = get_redis().lrange(job.stream_key, 0, -1)
+                output, _ = decode_output_entries(raw)
+            except Exception:  # noqa: BLE001
+                output = job.output or ""
+        return Response({"id": job.pk, "output": output})
 
     @action(detail=False, methods=["post"])
     def run(self, request):
         """在指定 Linux 主机上执行命令（asyncssh），输出实时写入 Redis 并广播。"""
-        from hosts.runner import run_ssh_job
+        from hosts.models import OS
+
+        from .quick import run_legacy_job_on_worker
 
         host = Host.objects.filter(pk=(request.data or {}).get("host_id")).first()
         command = (request.data or {}).get("command", "")
         name = (request.data or {}).get("name") or "手动作业"
         if not host:
             return Response({"detail": "host_id 无效"}, status=400)
+        if host.os_type == OS.WINDOWS:
+            return Response(
+                {"detail": f"主机「{host.name}」是 Windows 机器，命令执行仅支持 Linux/SSH"},
+                status=400,
+            )
         if not command:
             return Response({"detail": "command 不能为空"}, status=400)
 
@@ -96,9 +106,7 @@ class JobViewSet(viewsets.ViewSet):
         )
         log_action("run", "job", name, detail=f"主机「{host.name}」: {command[:80]}")
         try:
-            result = asyncio.run(
-                run_ssh_job(job.pk, host.pk, command)
-            )
+            result = run_legacy_job_on_worker(job.pk, host.pk, command)
         except Exception as exc:  # noqa: BLE001
             result = {"status": JobStatus.FAILED, "exit_code": None,
                       "error": str(exc)}

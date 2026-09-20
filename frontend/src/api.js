@@ -11,8 +11,10 @@ async function request(path, options = {}) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    const message = data?.detail || `请求失败（${res.status}）`;
-    throw new Error(message);
+    const err = new Error(data?.detail || `请求失败（${res.status}）`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -52,4 +54,21 @@ export const api = {
     }),
   checkHost: (hostId) =>
     request(`/hosts/${hostId}/check`, { method: "POST" }),
+
+  // ---- 快捷命令 ----
+  quickCheck: (payload) =>
+    request("/quick/check", { method: "POST", body: payload }),
+  quickRun: (payload) =>
+    request("/quick/run", { method: "POST", body: payload }),
+  quickCancelJob: (jobId) =>
+    request(`/quick/jobs/${jobId}/cancel`, { method: "POST" }),
+  quickCancelBatch: (batchId) =>
+    request(`/quick/batches/${batchId}/cancel`, { method: "POST" }),
+  quickJobOutput: (jobId) => request(`/quick/jobs/${jobId}/output`),
+  quickHistory: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== "" && v != null)
+    ).toString();
+    return request(`/quick/history${qs ? `?${qs}` : ""}`);
+  },
 };

@@ -4,6 +4,7 @@ import { useEventSource } from "./useEventSource.js";
 import Dashboard from "./components/Dashboard.jsx";
 import DirectoryTree from "./components/DirectoryTree.jsx";
 import HostEditor from "./components/HostEditor.jsx";
+import QuickConsole from "./components/QuickConsole.jsx";
 
 /** 递归更新树里某个主机的状态（SSE 推送时就地打补丁，避免整树闪烁） */
 function patchHostStatus(nodes, hostId, status, checkedAt) {
@@ -23,6 +24,17 @@ function indexDirectories(nodes, acc = new Map()) {
     indexDirectories(n.children || [], acc);
   }
   return acc;
+}
+
+/** 拍平树里的全部主机（同一主机多目录挂接时按 id 去重） */
+function flattenHosts(nodes, acc = new Map()) {
+  for (const node of nodes) {
+    for (const h of node.hosts || []) {
+      if (!acc.has(h.id)) acc.set(h.id, h);
+    }
+    flattenHosts(node.children || [], acc);
+  }
+  return [...acc.values()];
 }
 
 export default function App() {
@@ -156,10 +168,23 @@ export default function App() {
         >
           🗂️ 主机与目录
         </button>
+        <button
+          className={`nav-item ${view === "quick" ? "active" : ""}`}
+          onClick={() => setView("quick")}
+        >
+          ⚡ 快捷命令
+        </button>
       </nav>
 
       <main className="main">
         {view === "dashboard" && <Dashboard data={dashboard} />}
+        {view === "quick" && (
+          <QuickConsole
+            tree={tree}
+            hosts={flattenHosts(tree)}
+            pushToast={pushToast}
+          />
+        )}
         {view === "hosts" && (
           <HostsPage
             tree={tree}
