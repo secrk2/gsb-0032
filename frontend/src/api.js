@@ -11,10 +11,21 @@ async function request(path, options = {}) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    const message = data?.detail || `请求失败（${res.status}）`;
-    throw new Error(message);
+    const err = new Error(data?.detail || `请求失败（${res.status}）`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
+}
+
+function qs(params = {}) {
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") usp.append(k, v);
+  });
+  const s = usp.toString();
+  return s ? `?${s}` : "";
 }
 
 export const api = {
@@ -52,4 +63,18 @@ export const api = {
     }),
   checkHost: (hostId) =>
     request(`/hosts/${hostId}/check`, { method: "POST" }),
+
+  // ---- 快捷命令 ----
+  inspectCommand: (command) =>
+    request("/commands/inspect", { method: "POST", body: { command } }),
+  runCommand: (payload) =>
+    request("/commands/run", { method: "POST", body: payload }),
+
+  jobs: (params = {}) => request(`/jobs${qs(params)}`),
+  jobOutput: (id) => request(`/jobs/${id}/output`),
+  abortJob: (id) => request(`/jobs/${id}/abort`, { method: "POST" }),
+
+  batches: (params = {}) => request(`/batches${qs(params)}`),
+  abortBatch: (id) =>
+    request(`/batches/${id}/abort`, { method: "POST" }),
 };

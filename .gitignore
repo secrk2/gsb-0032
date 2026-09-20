@@ -12,3 +12,6 @@ coverage/
 *.log
 *.tsbuildinfo
 .DS_Store
+
+# 本地冒烟测试数据库
+db.sqlite3

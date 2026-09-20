@@ -2,6 +2,7 @@
 # 执钥后端入口：
 #   web      等待依赖 -> migrate -> (可选) seed -> uvicorn(ASGI/SSE)
 #   checker  在线周期巡检进程
+#   runner   快捷命令异步执行进程（消费 Redis 作业队列）
 #   shell    透传命令
 set -euo pipefail
 
@@ -22,7 +23,7 @@ wait_for() {
 ROLE="${1:-web}"
 
 case "$ROLE" in
-  web|checker)
+  web|checker|runner)
     wait_for "${MYSQL_HOST:-mysql}" "${MYSQL_PORT:-3306}"
     wait_for "$(echo "${REDIS_URL:-redis://redis:6379/0}" | sed -E 's#.*://([^:/]+).*#\1#')" 6379
     ;;
@@ -42,6 +43,19 @@ case "$ROLE" in
     # 等 web 完成首次迁移
     sleep 8
     exec python manage.py check_online
+    ;;
+  runner)
+    # 等 web 完成迁移（特别是 ops.0002 命令批次表）后再启动
+    retries=60
+    until python manage.py showmigrations ops 2>/dev/null | grep -q '\[X\] 0002'; do
+      retries=$((retries - 1))
+      if [ "$retries" -le 0 ]; then
+        echo "[entrypoint] 等待数据库迁移超时" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    exec python manage.py run_worker
     ;;
   shell)
     shift

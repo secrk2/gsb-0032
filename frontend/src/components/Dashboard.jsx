@@ -8,12 +8,16 @@ const ACTION_LABELS = {
   attach: "挂接",
   detach: "摘除",
   run: "执行作业",
+  run_dangerous: "危险命令",
+  run_blocked: "拦截执行",
+  abort: "中断",
 };
 
 const TARGET_LABELS = {
   host: "主机",
   directory: "目录",
   job: "作业",
+  command_batch: "快捷命令",
   user: "用户",
 };
 

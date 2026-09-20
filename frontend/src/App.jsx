@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { useEventSource } from "./useEventSource.js";
+import { jobEvents } from "./jobEvents.js";
 import Dashboard from "./components/Dashboard.jsx";
 import DirectoryTree from "./components/DirectoryTree.jsx";
 import HostEditor from "./components/HostEditor.jsx";
+import CommandConsole from "./components/CommandConsole.jsx";
 
 /** 递归更新树里某个主机的状态（SSE 推送时就地打补丁，避免整树闪烁） */
 function patchHostStatus(nodes, hostId, status, checkedAt) {
@@ -115,7 +117,12 @@ export default function App() {
           refreshDashboard();
           return;
         }
+        if (name === "job.output") {
+          jobEvents.output(data);
+          return;
+        }
         if (name === "job.finished") {
+          jobEvents.finished(data);
           refreshDashboard();
         }
       },
@@ -156,10 +163,19 @@ export default function App() {
         >
           🗂️ 主机与目录
         </button>
+        <button
+          className={`nav-item ${view === "console" ? "active" : ""}`}
+          onClick={() => setView("console")}
+        >
+          ⌨️ 快捷命令
+        </button>
       </nav>
 
       <main className="main">
         {view === "dashboard" && <Dashboard data={dashboard} />}
+        {view === "console" && (
+          <CommandConsole tree={tree} pushToast={pushToast} />
+        )}
         {view === "hosts" && (
           <HostsPage
             tree={tree}

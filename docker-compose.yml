@@ -5,6 +5,7 @@
 #   frontend        Nginx + React，唯一对外入口（8129）
 #   backend         Django + DRF + uvicorn（REST + SSE，asyncssh/RDP 探测）
 #   checker         在线周期巡检进程（复用后端镜像）
+#   runner          快捷命令异步执行进程（复用后端镜像，消费 Redis 作业队列）
 #   mysql           MySQL 8
 #   redis           Redis 7（作业队列/输出缓冲 + 实时事件）
 #   linux-client-1/2  真实 sshd 的模拟 Linux 主机
@@ -100,6 +101,26 @@ services:
       ONLINE_CHECK_INTERVAL: "20"
     depends_on:
       backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  runner:
+    image: zhiyue-backend:dev
+    build: ./backend
+    command: ["runner"]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhiyue}
+      MYSQL_USER: ${MYSQL_USER:-zhiyue}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhiyue}
+      REDIS_URL: redis://redis:6379/0
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-4SyJchvLbp5gPm_uAdA9MplOj_ORGxIJy_cEysoSBzY=}
+      JOB_CONNECT_TIMEOUT: "10"
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
