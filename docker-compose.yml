@@ -1,0 +1,162 @@
+# 执钥运维平台 —— 一键编排
+# 入口：http://localhost:8129
+#
+# 服务：
+#   frontend        Nginx + React，唯一对外入口（8129）
+#   backend         Django + DRF + uvicorn（REST + SSE，asyncssh/RDP 探测）
+#   checker         在线周期巡检进程（复用后端镜像）
+#   mysql           MySQL 8
+#   redis           Redis 7（作业队列/输出缓冲 + 实时事件）
+#   linux-client-1/2  真实 sshd 的模拟 Linux 主机
+#   windows-client    真实 xrdp 的模拟 Windows 主机（RDP 可连）
+
+name: zhiyue
+
+x-linux-client: &linux-client
+  image: zhiyue-linux-client:dev
+  build:
+    context: ./clients/linux
+    args:
+      OPS_USER: ${SEED_LINUX_USER:-ops}
+      OPS_PASSWORD: ${SEED_LINUX_PASSWORD:-Linux@2026}
+  environment:
+    OPS_USER: ${SEED_LINUX_USER:-ops}
+
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhiyue}
+      MYSQL_USER: ${MYSQL_USER:-zhiyue}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhiyue}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 6s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    image: zhiyue-backend:dev
+    build: ./backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhiyue}
+      MYSQL_USER: ${MYSQL_USER:-zhiyue}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhiyue}
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_DEBUG: "true"
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-4SyJchvLbp5gPm_uAdA9MplOj_ORGxIJy_cEysoSBzY=}
+      SEED_DEMO: "1"
+      SEED_LINUX_USER: ${SEED_LINUX_USER:-ops}
+      SEED_LINUX_PASSWORD: ${SEED_LINUX_PASSWORD:-Linux@2026}
+      SEED_WINDOWS_USER: ${SEED_WINDOWS_USER:-admin}
+      SEED_WINDOWS_PASSWORD: ${SEED_WINDOWS_PASSWORD:-Windows@2026}
+      ONLINE_CHECK_INTERVAL: "20"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health/"]
+      interval: 8s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    restart: unless-stopped
+
+  checker:
+    image: zhiyue-backend:dev
+    build: ./backend
+    command: ["checker"]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhiyue}
+      MYSQL_USER: ${MYSQL_USER:-zhiyue}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhiyue}
+      REDIS_URL: redis://redis:6379/0
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-4SyJchvLbp5gPm_uAdA9MplOj_ORGxIJy_cEysoSBzY=}
+      ONLINE_CHECK_INTERVAL: "20"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8129:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- 模拟被纳管客户端 ----
+  linux-client-1:
+    <<: *linux-client
+    hostname: linux-client-1
+    ports:
+      # 方便从宿主机手工验证：ssh ops@127.0.0.1 -p 2221
+      - "2221:22"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22 && head -c 3 <&3 | grep -q SSH"]
+      interval: 8s
+      timeout: 4s
+      retries: 10
+    restart: unless-stopped
+
+  linux-client-2:
+    <<: *linux-client
+    hostname: linux-client-2
+    ports:
+      - "2222:22"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22 && head -c 3 <&3 | grep -q SSH"]
+      interval: 8s
+      timeout: 4s
+      retries: 10
+    restart: unless-stopped
+
+  windows-client:
+    image: zhiyue-windows-client:dev
+    build:
+      context: ./clients/windows
+      args:
+        RDP_USER: ${SEED_WINDOWS_USER:-admin}
+        RDP_PASSWORD: ${SEED_WINDOWS_PASSWORD:-Windows@2026}
+    hostname: windows-client
+    shm_size: "512m" # Xfce/xrdp 图形会话需要更大的共享内存
+    ports:
+      # 宿主机用远程桌面连 127.0.0.1:3390（mstsc / Remmina / FreeRDP）
+      - "3390:3389"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3389"]
+      interval: 10s
+      timeout: 4s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
